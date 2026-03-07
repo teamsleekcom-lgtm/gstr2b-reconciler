@@ -6,8 +6,10 @@ import SummaryDashboard from './components/SummaryDashboard';
 import { parseBooksFile, parseGSTR2BFile } from './utils/parser';
 import { matchRecords } from './utils/matcher';
 import { generateReport } from './utils/reporter';
+import Merge2B from './components/Merge2B';
 
 function App() {
+    const [currentView, setCurrentView] = useState('RECONCILE'); // RECONCILE, MERGE
     const [appState, setAppState] = useState('UPLOAD'); // UPLOAD, PROCESSING, RESULTS, ERROR
     const [summaryData, setSummaryData] = useState(null);
     const [reportBuffer, setReportBuffer] = useState(null);
@@ -104,53 +106,73 @@ function App() {
                             <p className="text-xs text-blue-600 font-semibold tracking-wide uppercase mt-0.5">Local • Private • Instant</p>
                         </div>
                     </div>
+                    <div className="flex space-x-2 bg-gray-100 p-1 rounded-xl">
+                        <button
+                            onClick={() => setCurrentView('RECONCILE')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${currentView === 'RECONCILE' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Reconcile
+                        </button>
+                        <button
+                            onClick={() => setCurrentView('MERGE')}
+                            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${currentView === 'MERGE' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Merge 2B
+                        </button>
+                    </div>
                 </div>
             </header>
 
             <main className="flex-1 max-w-7xl mx-auto w-full px-4 px-6 pb-12">
-                {appState === 'UPLOAD' && (
-                    <FileUpload onStartReconciliation={handleStartReconciliation} />
-                )}
+                {currentView === 'MERGE' ? (
+                    <Merge2B />
+                ) : (
+                    <>
+                        {appState === 'UPLOAD' && (
+                            <FileUpload onStartReconciliation={handleStartReconciliation} />
+                        )}
 
-                {appState === 'PROCESSING' && (
-                    <div className="bg-white rounded-2xl shadow-xl p-16 max-w-2xl mx-auto border border-gray-100 flex flex-col items-center justify-center">
-                        <div className="relative w-24 h-24 mb-8">
-                            <div className="absolute inset-0 border-4 border-blue-100 rounded-full"></div>
-                            <div className="absolute inset-0 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
-                        </div>
-                        <h2 className="text-2xl font-bold text-gray-800 animate-pulse">Running Matching Engine...</h2>
-                        <p className="text-gray-500 mt-2 text-center text-sm">
-                            Cross-referencing invoices securely inside your browser.<br />This usually takes just a few seconds on your device.
-                        </p>
-                    </div>
-                )}
+                        {appState === 'PROCESSING' && (
+                            <div className="bg-white rounded-2xl shadow-xl p-16 max-w-2xl mx-auto border border-gray-100 flex flex-col items-center justify-center">
+                                <div className="relative w-24 h-24 mb-8">
+                                    <div className="absolute inset-0 border-4 border-blue-100 rounded-full"></div>
+                                    <div className="absolute inset-0 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
+                                </div>
+                                <h2 className="text-2xl font-bold text-gray-800 animate-pulse">Running Matching Engine...</h2>
+                                <p className="text-gray-500 mt-2 text-center text-sm">
+                                    Cross-referencing invoices securely inside your browser.<br />This usually takes just a few seconds on your device.
+                                </p>
+                            </div>
+                        )}
 
-                {appState === 'RESULTS' && summaryData && (
-                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out">
-                        <SummaryDashboard
-                            summary={summaryData}
-                            onDownload={handleDownload}
-                            onReset={handleReset}
-                        />
-                    </div>
-                )}
+                        {appState === 'RESULTS' && summaryData && (
+                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out">
+                                <SummaryDashboard
+                                    summary={summaryData}
+                                    onDownload={handleDownload}
+                                    onReset={handleReset}
+                                />
+                            </div>
+                        )}
 
-                {appState === 'ERROR' && (
-                    <div className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl mx-auto border border-red-100 text-center animate-in zoom-in-95">
-                        <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                        </div>
-                        <h2 className="text-xl font-bold text-gray-800 mb-2">Processing Failed</h2>
-                        <p className="text-red-600 mb-6 bg-red-50 p-4 rounded-lg text-sm fontFamily-mono">{errorMsg}</p>
-                        <button
-                            onClick={handleReset}
-                            className="px-6 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 font-medium transition-colors"
-                        >
-                            Go Back and Try Again
-                        </button>
-                    </div>
+                        {appState === 'ERROR' && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl mx-auto border border-red-100 text-center animate-in zoom-in-95">
+                                <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <h2 className="text-xl font-bold text-gray-800 mb-2">Processing Failed</h2>
+                                <p className="text-red-600 mb-6 bg-red-50 p-4 rounded-lg text-sm fontFamily-mono">{errorMsg}</p>
+                                <button
+                                    onClick={handleReset}
+                                    className="px-6 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 font-medium transition-colors"
+                                >
+                                    Go Back and Try Again
+                                </button>
+                            </div>
+                        )}
+                    </>
                 )}
             </main>
 
