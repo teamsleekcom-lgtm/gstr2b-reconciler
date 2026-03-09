@@ -106,25 +106,64 @@ export const mergeGSTR2BFiles = async (files) => {
                 };
             }
 
-            // Create a virtual "filled" 2D grid of headers so merged cells cascade horizontally
-            // This ensures every column actually has its parent's text even if the cell is blank
+            // Create a virtual "filled" 2D grid of headers to resolve both vertical and horizontal merged cells!
             const filledHeaders = [];
             for (let r = topHeaderRow; r <= taxRow; r++) {
                 filledHeaders[r] = [];
-                let lastKnownText = "";
                 for (let c = 0; c < maxCols; c++) {
-                    const text = rawData[r] && rawData[r][c] !== undefined ? safeStr(rawData[r][c]) : "";
-                    if (text) {
-                        lastKnownText = text;
-                    }
-                    filledHeaders[r][c] = lastKnownText;
+                    filledHeaders[r][c] = rawData[r] && rawData[r][c] !== undefined ? safeStr(rawData[r][c]) : "";
                 }
+            }
+
+            // Fill all empty slots inside official merge boundaries with the top-left value
+            if (worksheet['!merges']) {
+                worksheet['!merges'].forEach(merge => {
+                    const rStart = merge.s.r;
+                    const cStart = merge.s.c;
+                    const rEnd = merge.e.r;
+                    const cEnd = merge.e.c;
+
+                    // check if merge overlaps our header rows
+                    if (rEnd >= topHeaderRow && rStart <= taxRow) {
+                        const topLeftVal = rawData[rStart] && rawData[rStart][cStart] !== undefined ? safeStr(rawData[rStart][cStart]) : "";
+                        for (let r = Math.max(topHeaderRow, rStart); r <= Math.min(taxRow, rEnd); r++) {
+                            for (let c = cStart; c <= cEnd; c++) {
+                                if (filledHeaders[r]) {
+                                    filledHeaders[r][c] = topLeftVal;
+                                }
+                            }
+                        }
+                    }
+                });
             }
 
             const targetData = mergedSheetsData[normName];
 
             // Build a column map from This File Index -> Primary File Index
             const colMap = []; // Maps CurrentFile Index -> Master Index
+
+            const isReconciliationColumn = (normKey) => {
+                // Check the bottom-most target display name in the logical path
+                const target = normKey.split('::').pop();
+
+                const keepList = [
+                    'gstinofsupplier', 'gstinofeco', 'gstinofisd',
+                    'trade/legalname',
+                    'invoicenumber', 'notenumber', 'documentnumber', 'isddocumentnumber', 'number',
+                    'invoicedate', 'notedate', 'documentdate', 'isddocumentdate', 'date',
+                    'invoicevalue', 'notevalue', 'documentvalue', // Required standard total fields for parity
+                    'taxablevalue',
+                    'integratedtax', 'centraltax', 'state/uttax', 'cess',
+                    'itcavailability', 'eligibilityofitc'
+                ];
+
+                if (keepList.includes(target)) return true;
+
+                // Filing dates vary wildly across govt datasets, catch via substring
+                if (target.includes('filingdate')) return true;
+
+                return false;
+            };
 
             for (let c = 0; c < maxCols; c++) {
                 let rawHeaderStr = ""; // original text visually shown (bottom-most)
@@ -154,6 +193,12 @@ export const mergeGSTR2BFiles = async (files) => {
                 }
 
                 const normKey = colPathParts.join('::');
+
+                // Filter out verbose unnecessary columns to generate clean portal-ready drop-in exports
+                if (!isReconciliationColumn(normKey)) {
+                    colMap[c] = -1;
+                    continue; // Discard column completely and move to next
+                }
 
                 let primaryIdx = targetData.colKeys.indexOf(normKey);
 
