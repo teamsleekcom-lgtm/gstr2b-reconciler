@@ -19,8 +19,21 @@ const TARGET_SHEETS = [
 
 const normalizeSheetName = (name) => name.trim().toUpperCase().replace(/\s+/g, '');
 
+const normalizeColText = (text) => {
+    let t = String(text).replace(/[\s\n\r₹()]/g, '').toLowerCase();
+
+    // Heuristic normalization for inconsistent government text changes
+    if (t.endsWith('period')) return 'period';
+    if (t.endsWith('filingdate')) return 'filingdate';
+    if (t.includes('whetheritctobereduced')) return 'itcreduced';
+    if (t === 'rmarks') return 'remarks'; // GST portal typo in DEC-2025
+    if (t === 'rate%') return 'applicable%oftaxrate';
+
+    return t;
+};
+
 export const mergeGSTR2BFiles = async (files) => {
-    const mergedSheetsData = {}; // Map of normalizedSheetName -> { originalName, headers, combinedHeaderMap, allDataRows }
+    const mergedSheetsData = {}; // Map of normalizedSheetName -> { originalName, headerRows, masterTaxRow, colKeys, allDataRows }
 
     // Process files sequentially
     for (let fIdx = 0; fIdx < files.length; fIdx++) {
@@ -42,102 +55,106 @@ export const mergeGSTR2BFiles = async (files) => {
 
             const worksheet = workbook.Sheets[sheetName];
             const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-            
+
             if (rawData.length < 2) continue; // Skip empty sheets
 
-            // Find header row bounds robustly
-            let headerRowTop = -1;
-            let headerRowBottom = -1;
-
-            for (let i = 0; i < Math.min(20, rawData.length); i++) {
+            // 1. Locate the bottom row of the table headers scanning upwards
+            let taxRow = -1;
+            for (let i = Math.min(20, rawData.length) - 1; i >= 0; i--) {
                 const rowStr = rawData[i].map(c => typeof c === 'string' ? c.replace(/[\s\n\r₹()]/g, '').toLowerCase() : String(c));
-                
-                // Check if this row contains 'integratedtax'
-                if (rowStr.includes('integratedtax') || rowStr.includes('centraltax') || rowStr.includes('cess') || rowStr.includes('state/uttax')) {
-                    // We found the tax row! Is GSTIN/Name in this row too?
-                    if (rowStr.includes('gstinofsupplier') || rowStr.includes('trade/legalname') || rowStr.includes('recorddetails')) {
-                        headerRowTop = i;
-                        headerRowBottom = i; // single row header or top row
-                    } else if (i > 0) {
-                        const prevRowStr = rawData[i-1].map(c => typeof c === 'string' ? c.replace(/[\s\n\r₹()]/g, '').toLowerCase() : String(c));
-                        if (prevRowStr.includes('gstinofsupplier') || prevRowStr.includes('trade/legalname') || prevRowStr.includes('recorddetails')) {
-                            headerRowTop = i - 1;
-                            headerRowBottom = i;
-                        } else {
-                            // Default fallback
-                            headerRowTop = i;
-                            headerRowBottom = i;
-                        }
-                    } else {
-                        headerRowTop = i;
-                        headerRowBottom = i;
-                    }
-                    break;
-                } else if (rowStr.includes('gstinofsupplier') || rowStr.includes('trade/legalname') || rowStr.includes('recorddetails')) {
-                    // Found top header but not tax yet, tax might be in next row
-                    headerRowTop = i;
-                    headerRowBottom = i + 1; // tentatively try combining with next
+                if (
+                    rowStr.includes('integratedtax') ||
+                    rowStr.includes('centraltax') ||
+                    rowStr.includes('state/uttax') ||
+                    rowStr.includes('cess') ||
+                    rowStr.includes('gstinofsupplier') ||
+                    rowStr.includes('portcode') ||
+                    rowStr.includes('documentnumber')
+                ) {
+                    taxRow = i;
                     break;
                 }
             }
 
-            if (headerRowTop === -1) {
-                console.warn(`Could not find headers in sheet ${sheetName} of file ${file.name}. Skipping sheet.`);
+            if (taxRow === -1) {
+                console.warn(`Could not find table headers in sheet ${sheetName} of file ${file.name}. Skipping sheet.`);
                 continue;
             }
 
-            // Construct this sheet's composite header map
-            const colNames1 = rawData[headerRowTop] || [];
-            const colNames2 = headerRowBottom > headerRowTop ? (rawData[headerRowBottom] || []) : [];
-            const maxCols = Math.max(colNames1.length, colNames2.length);
-            const thisFileHeaderMap = [];
-
-            for (let c = 0; c < maxCols; c++) {
-                const c1 = safeStr(colNames1[c]);
-                const c2 = safeStr(colNames2[c]);
-                if (c1 && c2 && c1 !== c2) thisFileHeaderMap.push(`${c1} ${c2}`);
-                else if (c1) thisFileHeaderMap.push(c1);
-                else if (c2) thisFileHeaderMap.push(c2);
-                else thisFileHeaderMap.push(`Unnamed_${c}`);
+            // Detect actual number of columns for this sheet in this file
+            let maxCols = 0;
+            for (let i = Math.max(0, taxRow - 3); i <= taxRow; i++) {
+                if (rawData[i] && rawData[i].length > maxCols) {
+                    maxCols = rawData[i].length;
+                }
             }
 
             // Initialize sheet memory if this is the first file exposing this sheet
             if (!mergedSheetsData[normName]) {
+                const initialHeaders = rawData.slice(0, taxRow + 1).map(r => [...r]);
                 mergedSheetsData[normName] = {
                     originalName: sheetName,
-                    headers: rawData.slice(0, headerRowBottom + 1), // Top static gov text + Header rows
-                    combinedHeaderMap: thisFileHeaderMap,
+                    masterTaxRow: taxRow,
+                    headerRows: initialHeaders,
+                    colKeys: [],
                     allDataRows: []
                 };
             }
 
             const targetData = mergedSheetsData[normName];
-            
-            // Build a column map from This File Index -> Primary File Index
-            const colMap = [];
-            for (let c = 0; c < thisFileHeaderMap.length; c++) {
-                const headerStr = thisFileHeaderMap[c].replace(/[\s\n\r₹()]/g, '').toLowerCase();
-                const primaryIdx = targetData.combinedHeaderMap.findIndex(h => 
-                    h.replace(/[\s\n\r₹()]/g, '').toLowerCase() === headerStr
-                );
+            const colMap = []; // Maps CurrentFile Index -> Master Index
+
+            // Build dictionary matching mapped index logic
+            for (let c = 0; c < maxCols; c++) {
+                let rawHeaderStr = ""; // original text visually shown
+                let normKey = `unnamed_${c}`;
+
+                // Scan upwards to find the true textual header for this column visually
+                for (let r = taxRow; r >= Math.max(0, taxRow - 3); r--) {
+                    const cellVal = rawData[r] && rawData[r][c] !== undefined ? rawData[r][c] : "";
+                    const cellValText = safeStr(cellVal);
+                    if (cellValText) {
+                        rawHeaderStr = cellValText;
+                        normKey = normalizeColText(cellValText);
+                        break;
+                    }
+                }
+
+                let primaryIdx = targetData.colKeys.indexOf(normKey);
+
+                if (primaryIdx === -1) {
+                    // This is a BRAND NEW column introduced in this month's file!
+                    // We expand the master map horizontally to accommodate it securely.
+                    primaryIdx = targetData.colKeys.length;
+                    targetData.colKeys.push(normKey);
+
+                    // Insert the visual text into the Master Headers at the Tax Row
+                    if (targetData.headerRows[targetData.masterTaxRow]) {
+                        targetData.headerRows[targetData.masterTaxRow][primaryIdx] = rawHeaderStr;
+                    }
+                    // Pad preceding header rows visually with blanks
+                    for (let hr = 0; hr < targetData.masterTaxRow; hr++) {
+                        if (targetData.headerRows[hr]) targetData.headerRows[hr][primaryIdx] = "";
+                    }
+                }
+
                 colMap[c] = primaryIdx;
             }
 
-            // Push each row, realigned to match the primary combinedHeaderMap
-            const dataRows = rawData.slice(headerRowBottom + 1);
+            // Push each data row, realigned perfectly to match the master format dynamically
+            const dataRows = rawData.slice(taxRow + 1);
             dataRows.forEach(row => {
                 // Skip completely empty arrays (blank lines)
                 if (!row || row.length === 0 || row.every(c => !safeStr(c))) return;
-                
-                const alignedRow = new Array(targetData.combinedHeaderMap.length).fill("");
+
+                const alignedRow = new Array(targetData.colKeys.length).fill("");
                 row.forEach((cellVal, rawIdx) => {
                     const targetIdx = colMap[rawIdx];
                     if (targetIdx !== -1 && targetIdx !== undefined) {
-                        // Keep cellVal natively (e.g. number for dates) or safeStr
                         alignedRow[targetIdx] = cellVal;
                     }
                 });
-                
+
                 targetData.allDataRows.push(alignedRow);
             });
         }
@@ -155,12 +172,12 @@ export const mergeGSTR2BFiles = async (files) => {
         const normName = normalizeSheetName(ts);
         const sheetData = mergedSheetsData[normName];
         if (sheetData) {
-            const finalData = [...sheetData.headers, ...sheetData.allDataRows];
+            const finalData = [...sheetData.headerRows, ...sheetData.allDataRows];
             const newWs = XLSX.utils.aoa_to_sheet(finalData);
             XLSX.utils.book_append_sheet(newWb, newWs, sheetData.originalName);
         }
     }
-    
+
     // Generate Buffer
     const wbout = XLSX.write(newWb, { bookType: 'xlsx', type: 'array' });
     return wbout;
