@@ -102,7 +102,8 @@ export const mergeGSTR2BFiles = async (files) => {
             }
 
             // Determine the actual vertical start of the 'top-most' header to scan down from
-            let topHeaderRow = Math.max(0, taxRow - 3);
+            // User requested exactly 2 rows (taxRow and taxRow - 1) to ignore the giant top document titles
+            let topHeaderRow = Math.max(0, taxRow - 1);
 
             // Create a virtual "filled" 2D grid of headers so merged cells cascade horizontally
             // This ensures every column actually has its parent's text even if the cell is blank
