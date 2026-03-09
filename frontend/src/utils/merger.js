@@ -101,24 +101,57 @@ export const mergeGSTR2BFiles = async (files) => {
                 };
             }
 
+            // Determine the actual vertical start of the 'top-most' header to scan down from
+            let topHeaderRow = Math.max(0, taxRow - 3);
+
+            // Create a virtual "filled" 2D grid of headers so merged cells cascade horizontally
+            // This ensures every column actually has its parent's text even if the cell is blank
+            const filledHeaders = [];
+            for (let r = topHeaderRow; r <= taxRow; r++) {
+                filledHeaders[r] = [];
+                let lastKnownText = "";
+                for (let c = 0; c < maxCols; c++) {
+                    const text = rawData[r] && rawData[r][c] !== undefined ? safeStr(rawData[r][c]) : "";
+                    if (text) {
+                        lastKnownText = text;
+                    }
+                    filledHeaders[r][c] = lastKnownText;
+                }
+            }
+
             const targetData = mergedSheetsData[normName];
+
+            // Build a column map from This File Index -> Primary File Index
             const colMap = []; // Maps CurrentFile Index -> Master Index
 
-            // Build dictionary matching mapped index logic
             for (let c = 0; c < maxCols; c++) {
-                let rawHeaderStr = ""; // original text visually shown
-                let normKey = `unnamed_${c}`;
+                let rawHeaderStr = ""; // original text visually shown (bottom-most)
+                let colPathParts = [];
 
                 // Scan upwards to find the true textual header for this column visually
-                for (let r = taxRow; r >= Math.max(0, taxRow - 3); r--) {
-                    const cellVal = rawData[r] && rawData[r][c] !== undefined ? rawData[r][c] : "";
-                    const cellValText = safeStr(cellVal);
+                // We use the 'filledHeaders' array, so empty merged cells are already populated horizontally
+                for (let r = taxRow; r >= topHeaderRow; r--) {
+                    const cellValText = filledHeaders[r][c] || "";
                     if (cellValText) {
-                        rawHeaderStr = cellValText;
-                        normKey = normalizeColText(cellValText);
-                        break;
+                        const normKeyPt = normalizeColText(cellValText);
+
+                        // the bottom-most text is our raw display name
+                        if (!rawHeaderStr) rawHeaderStr = cellValText;
+
+                        // Prevent pushing duplicate consecutive parents (e.g. "Tax Amount -> Tax Amount -> Integrated Tax")
+                        if (colPathParts.length === 0 || colPathParts[0] !== normKeyPt) {
+                            colPathParts.unshift(normKeyPt);
+                        }
                     }
                 }
+
+                // If completely empty, assign fallback
+                if (colPathParts.length === 0) {
+                    colPathParts.push(`unnamed_${c}`);
+                    rawHeaderStr = `Unnamed_${c}`;
+                }
+
+                const normKey = colPathParts.join('::');
 
                 let primaryIdx = targetData.colKeys.indexOf(normKey);
 
@@ -128,13 +161,36 @@ export const mergeGSTR2BFiles = async (files) => {
                     primaryIdx = targetData.colKeys.length;
                     targetData.colKeys.push(normKey);
 
-                    // Insert the visual text into the Master Headers at the Tax Row
-                    if (targetData.headerRows[targetData.masterTaxRow]) {
-                        targetData.headerRows[targetData.masterTaxRow][primaryIdx] = rawHeaderStr;
+                    // Pad preceding header rows visually with blanks natively up to masterTaxRow
+                    for (let hr = 0; hr <= targetData.masterTaxRow; hr++) {
+                        if (!targetData.headerRows[hr]) {
+                            targetData.headerRows[hr] = [];
+                            for (let i = 0; i < targetData.colKeys.length; i++) targetData.headerRows[hr].push("");
+                        }
+                        targetData.headerRows[hr][primaryIdx] = "";
                     }
-                    // Pad preceding header rows visually with blanks
-                    for (let hr = 0; hr < targetData.masterTaxRow; hr++) {
-                        if (targetData.headerRows[hr]) targetData.headerRows[hr][primaryIdx] = "";
+
+                    // Insert the full hierarchy path dynamically into the rows
+                    // It backfills from masterTaxRow upwards
+                    let partIdx = colPathParts.length - 1;
+                    for (let r = targetData.masterTaxRow; r >= 0 && partIdx >= 0; r--) {
+                        // Ensure row exists and is long enough before assigning
+                        if (!targetData.headerRows[r]) {
+                            targetData.headerRows[r] = [];
+                            for (let i = 0; i < targetData.colKeys.length; i++) targetData.headerRows[r].push("");
+                        }
+
+                        // Just use the normalized part name as a display placeholder if original isn't easily traceable
+                        // (Usually it's identical except for spaces)
+                        // But for the very bottom row, we safely use `rawHeaderStr`
+                        if (r === targetData.masterTaxRow) {
+                            targetData.headerRows[r][primaryIdx] = rawHeaderStr;
+                        } else {
+                            // Quick title-case recreation for aesthetics
+                            const titleCased = colPathParts[partIdx].replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                            targetData.headerRows[r][primaryIdx] = titleCased;
+                        }
+                        partIdx--;
                     }
                 }
 
