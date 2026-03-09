@@ -89,21 +89,22 @@ export const mergeGSTR2BFiles = async (files) => {
                 }
             }
 
+            // Determine the actual vertical start of the 'top-most' header to scan down from
+            // User requested exactly 2 rows (taxRow and taxRow - 1) to ignore the giant top document titles
+            let topHeaderRow = Math.max(0, taxRow - 1);
+
             // Initialize sheet memory if this is the first file exposing this sheet
             if (!mergedSheetsData[normName]) {
-                const initialHeaders = rawData.slice(0, taxRow + 1).map(r => [...r]);
+                // Slice ONLY from topHeaderRow instead of 0 to eliminate global document titles
+                const initialHeaders = rawData.slice(topHeaderRow, taxRow + 1).map(r => [...r]);
                 mergedSheetsData[normName] = {
                     originalName: sheetName,
-                    masterTaxRow: taxRow,
+                    masterTaxRow: taxRow - topHeaderRow, // Relative index (always 1 or 0)
                     headerRows: initialHeaders,
                     colKeys: [],
                     allDataRows: []
                 };
             }
-
-            // Determine the actual vertical start of the 'top-most' header to scan down from
-            // User requested exactly 2 rows (taxRow and taxRow - 1) to ignore the giant top document titles
-            let topHeaderRow = Math.max(0, taxRow - 1);
 
             // Create a virtual "filled" 2D grid of headers so merged cells cascade horizontally
             // This ensures every column actually has its parent's text even if the cell is blank
@@ -171,27 +172,14 @@ export const mergeGSTR2BFiles = async (files) => {
                         targetData.headerRows[hr][primaryIdx] = "";
                     }
 
-                    // Insert the full hierarchy path dynamically into the rows
-                    // It backfills from masterTaxRow upwards
-                    let partIdx = colPathParts.length - 1;
-                    for (let r = targetData.masterTaxRow; r >= 0 && partIdx >= 0; r--) {
-                        // Ensure row exists and is long enough before assigning
-                        if (!targetData.headerRows[r]) {
-                            targetData.headerRows[r] = [];
-                            for (let i = 0; i < targetData.colKeys.length; i++) targetData.headerRows[r].push("");
-                        }
-
-                        // Just use the normalized part name as a display placeholder if original isn't easily traceable
-                        // (Usually it's identical except for spaces)
-                        // But for the very bottom row, we safely use `rawHeaderStr`
+                    // Insert ONLY the raw, bottom-most name for clean portals.
+                    // The user explicitly requested to NOT have messy mapping names built in rows above.
+                    for (let r = targetData.masterTaxRow; r >= 0; r--) {
                         if (r === targetData.masterTaxRow) {
                             targetData.headerRows[r][primaryIdx] = rawHeaderStr;
                         } else {
-                            // Quick title-case recreation for aesthetics
-                            const titleCased = colPathParts[partIdx].replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
-                            targetData.headerRows[r][primaryIdx] = titleCased;
+                            targetData.headerRows[r][primaryIdx] = ""; // Keep clean
                         }
-                        partIdx--;
                     }
                 }
 
