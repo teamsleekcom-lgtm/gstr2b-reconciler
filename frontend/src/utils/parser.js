@@ -266,3 +266,103 @@ export const parseGSTR2BFile = async (file) => {
         reader.readAsArrayBuffer(file);
     });
 };
+
+// ============================================================
+// Easy Software Books Parser
+// ============================================================
+export const parseEasyBooksFile = async (file) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+
+                // Use the first sheet (data sheet)
+                const targetSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[targetSheetName];
+                const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+
+                if (!rawData || rawData.length === 0) {
+                    throw new Error("Easy Books file is empty.");
+                }
+
+                // 1. Find header row by looking for "GST No" or "Account Name"
+                let headerRowIdx = -1;
+                for (let i = 0; i < Math.min(15, rawData.length); i++) {
+                    const rowValues = rawData[i].map(c => safeStr(c).replace(/[\s\n\r]/g, '').toLowerCase());
+                    if (rowValues.includes('gstno') || rowValues.includes('accountname')) {
+                        headerRowIdx = i;
+                        break;
+                    }
+                }
+
+                if (headerRowIdx === -1) {
+                    throw new Error("Could not find header row containing 'GST No' or 'Account Name' in the Easy Books file.");
+                }
+
+                const headers = rawData[headerRowIdx].map(c => safeStr(c));
+
+                // 2. Map column indices (Easy-specific names)
+                const getColIdx = (possibleNames) => {
+                    for (let i = 0; i < headers.length; i++) {
+                        const hLower = headers[i].toLowerCase().replace(/[\s\n\r]/g, '');
+                        for (const p of possibleNames) {
+                            if (hLower === p.toLowerCase().replace(/[\s\n\r]/g, '')) {
+                                return i;
+                            }
+                        }
+                    }
+                    return -1;
+                };
+
+                const gstinIdx = getColIdx(["GST No"]);
+                const partyIdx = getColIdx(["Account Name"]);
+                const invNoIdx = getColIdx(["Bill No"]);
+                const invDateIdx = getColIdx(["Date"]);
+                const taxIdx = getColIdx(["Taxable Amt"]);
+                const igstIdx = getColIdx(["IGT. Amt"]);
+                const cgstIdx = getColIdx(["CGT. Amt"]);
+                const sgstIdx = getColIdx(["SGT. Amt"]);
+
+                // 3. Read data starting from headerRowIdx + 1 (Easy has single header row)
+                const dataRows = rawData.slice(headerRowIdx + 1);
+
+                const mappedData = [];
+
+                for (const row of dataRows) {
+                    if (!row || row.length === 0) continue;
+
+                    const firstCell = safeStr(row[0]).toLowerCase();
+
+                    // Skip "Sub Total:", empty rows, and total rows
+                    if (firstCell.startsWith('sub total') || firstCell === 'total' || firstCell === 'grand total') {
+                        continue;
+                    }
+
+                    const gstin = gstinIdx !== -1 ? safeStr(row[gstinIdx]) : "";
+
+                    // Must have GSTIN to be considered a valid B2B record
+                    if (gstin && gstin.length >= 15) {
+                        mappedData.push({
+                            gstin: gstin,
+                            party_name: partyIdx !== -1 ? safeStr(row[partyIdx]) : "",
+                            inv_no: invNoIdx !== -1 ? safeStr(row[invNoIdx]) : "",
+                            inv_date: invDateIdx !== -1 ? safeDate(row[invDateIdx]) : "",
+                            taxable_value: taxIdx !== -1 ? safeFloat(row[taxIdx]) : 0.0,
+                            igst: igstIdx !== -1 ? safeFloat(row[igstIdx]) : 0.0,
+                            cgst: cgstIdx !== -1 ? safeFloat(row[cgstIdx]) : 0.0,
+                            sgst: sgstIdx !== -1 ? safeFloat(row[sgstIdx]) : 0.0,
+                        });
+                    }
+                }
+
+                resolve(mappedData);
+            } catch (err) {
+                reject(err);
+            }
+        };
+        reader.onerror = (err) => reject(new Error("Failed to read the file"));
+        reader.readAsArrayBuffer(file);
+    });
+};

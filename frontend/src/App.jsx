@@ -3,7 +3,7 @@ import FileUpload from './components/FileUpload';
 import SummaryDashboard from './components/SummaryDashboard';
 
 // Import our new JS-based utilities
-import { parseBooksFile, parseGSTR2BFile } from './utils/parser';
+import { parseBooksFile, parseGSTR2BFile, parseEasyBooksFile } from './utils/parser';
 import { matchRecords } from './utils/matcher';
 import { generateReport } from './utils/reporter';
 import Merge2B from './components/Merge2B';
@@ -15,13 +15,15 @@ function App() {
     const [reportBuffer, setReportBuffer] = useState(null);
     const [errorMsg, setErrorMsg] = useState('');
 
-    const handleStartReconciliation = async (booksFile, gstrFile) => {
+    const handleStartReconciliation = async (booksFile, gstrFile, booksSoftware = 'tally') => {
         setAppState('PROCESSING');
         setErrorMsg('');
 
         try {
-            // 1. Parsing
-            const booksData = await parseBooksFile(booksFile);
+            // 1. Parsing — route to correct parser based on software selection
+            const booksData = booksSoftware === 'easy'
+                ? await parseEasyBooksFile(booksFile)
+                : await parseBooksFile(booksFile);
             const gstrData = await parseGSTR2BFile(gstrFile);
 
             // 2. Matching

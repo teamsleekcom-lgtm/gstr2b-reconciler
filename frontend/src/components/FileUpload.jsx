@@ -4,6 +4,7 @@ import { FileUp, FileSpreadsheet, CheckCircle2, RotateCcw } from 'lucide-react';
 export default function FileUpload({ onStartReconciliation }) {
     const [booksFile, setBooksFile] = useState(null);
     const [gstrFile, setGstrFile] = useState(null);
+    const [booksSoftware, setBooksSoftware] = useState('tally');
 
     const handleBooksDrop = (e) => {
         e.preventDefault();
@@ -21,7 +22,7 @@ export default function FileUpload({ onStartReconciliation }) {
 
     const handleSubmit = () => {
         if (booksFile && gstrFile) {
-            onStartReconciliation(booksFile, gstrFile);
+            onStartReconciliation(booksFile, gstrFile, booksSoftware);
         }
     };
 
@@ -74,7 +75,20 @@ export default function FileUpload({ onStartReconciliation }) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                {renderDropZone(booksFile, setBooksFile, handleBooksDrop, "Books File (.xls / .xlsx)", ".xls,.xlsx")}
+                <div>
+                    <div className="mb-3">
+                        <label className="block text-sm font-semibold text-gray-600 mb-1">Books Software</label>
+                        <select
+                            value={booksSoftware}
+                            onChange={(e) => setBooksSoftware(e.target.value)}
+                            className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all"
+                        >
+                            <option value="tally">Tally</option>
+                            <option value="easy">Easy</option>
+                        </select>
+                    </div>
+                    {renderDropZone(booksFile, setBooksFile, handleBooksDrop, "Books File (.xls / .xlsx)", ".xls,.xlsx")}
+                </div>
                 {renderDropZone(gstrFile, setGstrFile, handleGstrDrop, "GSTR-2B File (.xls / .xlsx)", ".xls,.xlsx")}
             </div>
 
